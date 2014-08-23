@@ -54,14 +54,14 @@ class RequireNodeCommand(sublime_plugin.TextCommand):
 
         return write
 
-    def resolve_from_file(self, full_path):
+    def resolve_from_file(self, full_path, is_relative=True, root_path=None):
         def resolve():
-            file = self.view.file_name()
+            file = root_path or self.view.file_name()
             file_wo_ext = os.path.splitext(full_path)[0]
             module_candidate_name = os.path.basename(file_wo_ext).replace(".", "")
             module_rel_path = os.path.relpath(file_wo_ext, os.path.dirname(file))
 
-            if module_rel_path[:3] != ".." + os.path.sep:
+            if is_relative and module_rel_path[:3] != ".." + os.path.sep:
                 module_rel_path = "." + os.path.sep + module_rel_path
 
             return [module_candidate_name, module_rel_path.replace(os.path.sep, "/")]
@@ -79,7 +79,12 @@ class RequireNodeCommand(sublime_plugin.TextCommand):
                                  if os.path.isdir(os.path.join(candidate, name)) and name != ".bin"]:
                     resolvers.append(lambda dir=dir: [dir, dir])
                     suggestions.append("module: " + dir)
-                break
+                    if dir.startswith("vidi-"):
+                        full_path = os.path.join(candidate, dir)
+                        (resolvers_from_file, suggestions_from_file) = self.get_suggestion_files(full_path, False, full_path)
+                        resolvers += resolvers_from_file
+                        suggestions += suggestions_from_file
+                # break
             current_dir = os.path.split(current_dir)[0]
         return [resolvers, suggestions]
 
@@ -99,13 +104,9 @@ class RequireNodeCommand(sublime_plugin.TextCommand):
         except Exception:
             return [[], []]
 
-    def run(self, edit):
-        self.edit = edit;
-
-        folder = self.view.window().folders()[0]
+    def get_suggestion_files(self, folder, is_relative=True, resolve_from_folder=None):
         suggestions = []
         resolvers = []
-
         #create suggestions for all files in the project
         for root, subFolders, files in os.walk(folder, followlinks=True):
             if root.startswith(os.path.join(folder, "node_modules")):
@@ -114,11 +115,19 @@ class RequireNodeCommand(sublime_plugin.TextCommand):
                 continue
             for file in files:
                 if file == "index.js" or file == "index.coffee":
-                    resolvers.append(self.resolve_from_file(root))
+                    resolvers.append(self.resolve_from_file(root, is_relative, resolve_from_folder))
                     suggestions.append([os.path.split(root)[1], root])
                     continue
-                resolvers.append(self.resolve_from_file(os.path.join(root, file)))
-                suggestions.append([file, root.replace(folder, "", 1) or file])
+                resolvers.append(self.resolve_from_file(os.path.join(root, file), is_relative, resolve_from_folder))
+                base = resolve_from_folder and os.path.split(resolve_from_folder)[1] or ''
+                suggestions.append([file, base + (root.replace(folder, "", 1) or file)])
+        return (resolvers, suggestions)
+
+    def run(self, edit):
+        self.edit = edit;
+
+        folder = self.view.window().folders()[0]
+        resolvers, suggestions = self.get_suggestion_files(folder)
 
         #create suggestions for modules in node_module folder
         [resolvers_from_nm, suggestions_from_nm] = self.get_suggestion_from_nodemodules()
